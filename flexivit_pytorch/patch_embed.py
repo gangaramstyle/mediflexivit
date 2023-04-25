@@ -75,7 +75,7 @@ def pi_resize_patch_embed(
 
 def interpolate_resize_patch_embed(
     patch_embed: Tensor,
-    new_patch_size: Tuple[int, int],
+    new_patch_size: Tuple[int, int, int],
     interpolation: str = "bicubic",
     antialias: bool = True,
 ):
@@ -89,8 +89,8 @@ def interpolate_resize_patch_embed(
     Returns:
         Resized pos_embed of size [d, c h', w']
     """
-    assert len(patch_embed.shape) == 4, "Patch embed kernel should be a 4D tensor"
-    assert len(new_patch_size) == 2, "New patch size should only be (height, width)"
+    assert len(patch_embed.shape) == 5, "Patch embed kernel should be a 4D tensor"
+    assert len(new_patch_size) == 3, "New patch size should only be (height, width)"
 
     patch_embed = F.interpolate(
         patch_embed, new_patch_size, mode=interpolation, antialias=antialias
@@ -102,9 +102,9 @@ def interpolate_resize_patch_embed(
 class FlexiPatchEmbed(nn.Module):
     def __init__(
         self,
-        img_size: Union[int, Tuple[int, int]] = 240,
-        patch_size: Union[int, Tuple[int, int]] = 32,
-        grid_size: Union[int, Tuple[int, int]] = 7,
+        img_size: Union[int, Tuple[int, int, int]] = 240,
+        patch_size: Union[int, Tuple[int, int, int]] = 32,
+        grid_size: Union[int, Tuple[int, int, int]] = 7,
         in_chans: int = 3,
         embed_dim: int = 768,
         norm_layer: Optional[nn.Module] = None,
@@ -198,7 +198,7 @@ class FlexiPatchEmbed(nn.Module):
         resize_matrix = torch.stack(mat)
         return torch.linalg.pinv(resize_matrix)
 
-    def resize_patch_embed(self, patch_embed: Tensor, new_patch_size: Tuple[int, int]):
+    def resize_patch_embed(self, patch_embed: Tensor, new_patch_size: Tuple[int, int, int]):
         """Resize patch_embed to target resolution via pseudo-inverse resizing"""
         # Return original kernel if no resize is necessary
         if self.patch_size == new_patch_size:
@@ -213,9 +213,9 @@ class FlexiPatchEmbed(nn.Module):
         pinv = pinv.to(patch_embed.device)
 
         def resample_patch_embed(patch_embed: Tensor):
-            h, w = new_patch_size
+            h, w, d = new_patch_size
             resampled_kernel = pinv @ patch_embed.reshape(-1)
-            return rearrange(resampled_kernel, "(h w) -> h w", h=h, w=w)
+            return rearrange(resampled_kernel, "(h w d) -> h w d", h=h, w=w, d=d)
 
         v_resample_patch_embed = vmap(vmap(resample_patch_embed, 0, 0), 1, 1)
 
@@ -236,9 +236,10 @@ class FlexiPatchEmbed(nn.Module):
             assert (
                 self.patch_size_seq
             ), "No patch size specified during forward and no patch_size_seq given to FlexiPatchEmbed"
-            patch_size = np.random.choice(self.patch_size_seq, p=self.patch_size_probs)
+            patch_choice = np.random.choice(range(len(self.patch_size_seq)), p=self.patch_size_probs)
+            patch_size = self.patch_size_seq[patch_choice]
 
-        patch_size = to_2tuple(patch_size)
+        patch_size = to_3tuple(patch_size)
 
         # Resize conv weights
         if patch_size == self.patch_size:
@@ -247,7 +248,7 @@ class FlexiPatchEmbed(nn.Module):
             weight = self.resize_patch_embed(self.proj.weight, patch_size)
 
         # Apply conv with resized weights
-        x = F.conv2d(x, weight, bias=self.proj.bias, stride=patch_size)
+        x = F.conv3d(x, weight, bias=self.proj.bias, stride=patch_size)
 
         if self.flatten:
             x = x.flatten(2).transpose(1, 2)  # BCHW -> BNC

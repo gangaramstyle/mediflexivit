@@ -12,6 +12,11 @@ def to_2tuple(x: Any) -> Tuple:
         return tuple(x)
     return tuple(repeat(x, 2))
 
+def to_3tuple(x: Any) -> Tuple:
+    if isinstance(x, collections.abc.Iterable) and not isinstance(x, str):
+        return tuple(x)
+    return tuple(repeat(x, 3))
+
 
 def resize_abs_pos_embed(
     pos_embed: torch.Tensor,
@@ -36,12 +41,12 @@ def resize_abs_pos_embed(
         Resized pos_embed of size [b, n', d]
     """
 
-    new_size = to_2tuple(new_size)
-    new_ntok = new_size[0] * new_size[1]
+    new_size = to_3tuple(new_size)
+    new_ntok = new_size[0] * new_size[1] * new_size[2]
 
     if not old_size:
         old_size = int(math.sqrt(pos_embed.shape[1] - num_prefix_tokens))  # type:ignore
-    old_size = to_2tuple(old_size)
+    old_size = to_3tuple(old_size)
 
     # Return if no resize necessary
     if new_size == old_size:
